@@ -1,0 +1,42 @@
+{
+  "MacBook Air 5": {
+    "fx": 936.1327885102249,
+    "fy": 940.5440012883985,
+    "cx": 639.1300178259893,
+    "cy": 342.36027037372423,
+    "dist": [
+      0.00667503636339062,
+      -0.06556107058171359,
+      -0.0018240285745645154,
+      0.005792335869084137,
+      0.15270693597052837
+    ],
+    "width": 1280,
+    "height": 720,
+    "camera_id": "MacBook Air 5",
+    "rms_reproj_error": 1.7029738276457977,
+    "n_views": 13,
+    "created_at": 1789713781.196,
+    "notes": "Calibrated via MacBook Camera Calibration (browser, OpenCV.js ChArUco), ChArUco 5x7 (DICT_5X5_100); 13 views used, 2 auto-pruned; HFOV 68.7 deg, VFOV 41.9 deg."
+  },
+  "MacBook Air M3": {
+    "fx": 939.5104447995691,
+    "fy": 939.6585664345199,
+    "cx": 620.1050546094192,
+    "cy": 356.7354478234606,
+    "dist": [
+      -0.025535897560703454,
+      0.3463239495671479,
+      0.000895658532353438,
+      -0.005829471873758798,
+      -0.5787255995701537
+    ],
+    "width": 1280,
+    "height": 720,
+    "camera_id": "MacBook Air M3",
+    "rms_reproj_error": 2.7829011018309355,
+    "n_views": 15,
+    "created_at": 1789814345.762,
+    "notes": "Calibrated via MacBook Camera Calibration (browser, OpenCV.js ChArUco), ChArUco 5x7 (DICT_5X5_100); 15 views used, 0 auto-pruned; HFOV 68.5 deg, VFOV 41.9 deg."
+  }
+}

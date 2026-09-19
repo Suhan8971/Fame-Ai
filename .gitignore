@@ -1,0 +1,6 @@
+.DS_Store
+backend/.env
+frontend/.env
+frontend/.env.local
+logs/
+tools/

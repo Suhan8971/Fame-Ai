@@ -1,0 +1,30 @@
+# Fashion-Show Body Scanner & Virtual Try-On API dependencies
+# (migrated from shirt-new-app-1)
+
+flask>=2.0.0
+# The React frontend calls this API from another origin (Vite dev server).
+flask-cors>=4.0.0
+# 4.7+ required: cv2.aruco (used by scale_reference.py / make_marker.py for the
+# printed scale marker) moved into the main opencv-python wheel at 4.7, and the
+# cv2.aruco.ArucoDetector API this project uses is 4.7+ only. No
+# opencv-contrib-python needed - the guided filter in body_segmentation.py is
+# implemented on core box filters precisely to avoid that dependency.
+opencv-python>=4.7.0
+mediapipe==0.10.21
+numpy>=1.21.0
+pillow>=9.0.0
+scipy>=1.10.0
+
+# CatVTON (vendored in catvton/) + SCHP human parsing (vendored in schp/)
+# dependencies -- CC BY-NC-SA 4.0, non-commercial use only, see catvton/LICENSE
+torch>=2.0.0
+torchvision>=0.15.0
+diffusers>=0.25.0
+transformers>=4.36.0
+accelerate>=0.25.0
+safetensors>=0.4.0
+huggingface_hub>=0.20.0
+
+# Optional cloud engine (tried first if OPENAI_API_KEY is set -- see
+# .env.example): pip install openai
+openai>=1.0.0

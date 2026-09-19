@@ -1,0 +1,27 @@
+.env
+__pycache__/
+*.pyc
+.cache/
+
+# Login credentials (plaintext demo store) -- never commit this
+data/users.json
+
+# Runtime data: captured photos, stored model sessions, try-on results
+static/captures/*
+!static/captures/.gitkeep
+static/models/*
+!static/models/.gitkeep
+calibration/chessboard/
+calibration/scale_marker.png
+
+# camera_profile.json is INTENTIONALLY tracked (not ignored): it's the
+# per-device calibration data the app needs to run correctly, not a secret
+# or a generated build artifact.
+
+# Personal validation data (tape measurements, scoring reports)
+validation_data/ground_truth.csv
+validation_data/validation_report.json
+
+# Automated tests -- excluded from this repo per project decision, not
+# needed for the app to run
+tests_*.py
