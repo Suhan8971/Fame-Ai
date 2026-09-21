@@ -230,6 +230,11 @@ export interface ScannerStatus {
   last_rejection: { view: ScanView; reason: string; at: number } | null;
   model: { id: string; name: string; email: string } | null;
   device_model: string | null;
+  // "browser" (production/Render default): the frontend must open
+  // getUserMedia and push frames to /push_frame. "local" (dev only): the
+  // backend owns a physical webcam itself and /video_feed is enough on its
+  // own. See backend/app.py's CAMERA_MODE.
+  camera_mode: "browser" | "local";
   vton_engine: { real_model_ready: boolean; status: string; device: string; openai_configured: boolean };
 }
 

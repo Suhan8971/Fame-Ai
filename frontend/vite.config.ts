@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
   const proxy = Object.fromEntries(
     [
       '/start', '/status', '/reset', '/retake_current', '/stop_camera', '/video_feed',
-      '/ground_truth', '/calibration_status', '/measurement_report', '/try_on',
+      '/push_frame', '/ground_truth', '/calibration_status', '/measurement_report', '/try_on',
       '/api', '/static/captures', '/static/models',
     ].map((path) => [path, { target: backend, changeOrigin: true }])
   )

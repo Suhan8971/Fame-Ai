@@ -84,15 +84,31 @@ from openai_vton_engine import closest_supported_size
 
 vton_engine = VTONInferenceEngine()
 inference_lock = threading.Lock()
-# Constructed inside `if __name__ == "__main__":` below, not here: it starts
-# a real OS process, and multiprocessing's "spawn" start method (macOS
-# default) re-executes this file in the child with __name__=="__mp_main__"
-# to bootstrap -- constructing it at true module top-level would make the
-# child ALSO try to spawn a worker process during its own bootstrap, which
-# Python's multiprocessing safety check correctly refuses (RuntimeError:
-# "attempt... before the current process has finished its bootstrapping").
+# Lazily constructed by get_inference_process_manager() below, on first
+# actual try-on request, rather than at true module import time: it starts
+# a real OS process, and multiprocessing's "spawn" start method re-executes
+# this file in the child to bootstrap. Constructing it while THIS process
+# is still importing (i.e. before Flask/gunicorn has finished loading the
+# module) would make that child ALSO try to spawn a worker during its own
+# bootstrap, which Python's multiprocessing safety check correctly refuses.
+# Deferring to first-request time sidesteps that entirely, and -- unlike
+# the previous "only construct it inside `if __name__ == '__main__'`"
+# approach -- also works under gunicorn, which imports this module as
+# `app:app` and never runs that block (`python app.py` still warm-starts
+# it eagerly below, for local dev convenience).
 inference_process_manager = None
+_inference_manager_lock = threading.Lock()
 INFERENCE_TIMEOUT_SECONDS = 60
+
+
+def get_inference_process_manager():
+    global inference_process_manager
+    if inference_process_manager is None:
+        with _inference_manager_lock:
+            if inference_process_manager is None:
+                inference_process_manager = InferenceProcessManager()
+    return inference_process_manager
+
 
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
@@ -105,6 +121,20 @@ os.makedirs(model_store.MODELS_DIR, exist_ok=True)
 # ./.env into os.environ, so these settings can live there too.
 CAMERA_INDEX = int(os.environ.get("CAMERA_INDEX", "0"))
 SCANNER_PORT = int(os.environ.get("SCANNER_PORT", "5050"))
+
+# "browser" (default): the camera lives in the candidate's browser
+# (getUserMedia) and frames arrive over HTTP at POST /push_frame -- this is
+# what a remote deployment (frontend on Vercel, this API on Render) needs,
+# since Render has no physical camera to open. "local": the ORIGINAL
+# behaviour, cv2.VideoCapture(CAMERA_INDEX) opens a camera physically
+# attached to whatever machine runs this Flask process -- kept for local
+# development on a laptop with its own webcam, unchanged from before.
+# camera_loop() below is the only thing that branches on this; every stage
+# after "a BGR frame exists" (MediaPipe, guidance, measurement, overlays,
+# the MJPEG /video_feed output) is completely unaware of where the frame
+# came from and needed no changes.
+CAMERA_MODE = os.environ.get("CAMERA_MODE", "browser").strip().lower()
+
 CORS_ORIGINS = [o.strip() for o in os.environ.get(
     "CORS_ORIGINS",
     "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,"
@@ -212,8 +242,33 @@ state = {
 latest_jpeg = None           # latest annotated live frame, for MJPEG stream
 jpeg_lock = threading.Lock()
 
+# The browser's most recently uploaded raw frame (CAMERA_MODE=browser).
+# POST /push_frame writes it; camera_loop() reads it in place of
+# cap.read(). Separate lock from jpeg_lock: one is written by the upload
+# request thread, the other by the camera_loop thread, and they must not
+# block each other -- the browser should never wait on MJPEG encoding to
+# finish just to hand over its next frame.
+latest_browser_frame = None
+latest_browser_frame_at = 0.0
+browser_frame_lock = threading.Lock()
+# How long without a new browser frame before we treat the feed as dead
+# (permission revoked mid-session, tab backgrounded, network drop, etc.)
+# and surface a real error instead of silently freezing on stale guidance.
+BROWSER_FRAME_TIMEOUT_SECONDS = 8.0
+
 # Alignment tuning
 FRAMES_NEEDED_TO_TRIGGER = 20   # ~ how long you must hold still (at ~20fps -> ~1s)
+# Same "hold still" requirement, but measured in wall-clock time rather than
+# a frame count. CAMERA_MODE=local still runs the preview loop at a fairly
+# steady ~20fps, so FRAMES_NEEDED_TO_TRIGGER/~20fps and this agree there;
+# CAMERA_MODE=browser's frame rate depends on the candidate's own network
+# and how often the frontend pushes to /push_frame (deliberately throttled
+# well below 20fps to keep bandwidth sane), which a frame-COUNT threshold
+# would silently turn into a much longer, rate-dependent hold. Both branches
+# below check ALIGN_HOLD_SECONDS, so this is the one that actually governs
+# the countdown trigger now; FRAMES_NEEDED_TO_TRIGGER is kept only as the
+# doc-comment basis for that duration.
+ALIGN_HOLD_SECONDS = 1.0
 COUNTDOWN_SECONDS = 3
 VIEW_CAPTURED_PAUSE_SECONDS = 2.5  # how long to pause on "captured!" before next view
 # Cross-view agreement thresholds now live with the fusion logic
@@ -576,14 +631,23 @@ def build_summary(engine, views_data):
 def camera_loop():
     global latest_jpeg, STOP_THREAD
 
-    cap = cv2.VideoCapture(CAMERA_INDEX)
-    if not cap.isOpened():
-        with state_lock:
-            state["mode"] = "error"
-            state["message"] = "Could not open webcam."
-        return
+    # CAMERA_MODE=local (opt-in, for a developer's own laptop webcam): open
+    # the physical device exactly as before. CAMERA_MODE=browser (default,
+    # what production/Render runs): there is no physical device to open --
+    # frames arrive via POST /push_frame instead, so `cap` stays None and
+    # is never touched again in this function.
+    cap = None
+    if CAMERA_MODE == "local":
+        cap = cv2.VideoCapture(CAMERA_INDEX)
+        if not cap.isOpened():
+            with state_lock:
+                state["mode"] = "error"
+                state["message"] = "Could not open webcam."
+            return
 
+    no_browser_frame_since = time.time()
     countdown_start_time = None
+    aligned_since = None      # wall-clock time the person first became aligned+gate_ok
     gate_frame_counter = 0
     live_gate = None          # most recent FULL validate_capture() result
 
@@ -603,11 +667,39 @@ def camera_loop():
                        min_tracking_confidence=0.5) as pose:
 
         while not STOP_THREAD:
-            ret, frame = cap.read()
-            if not ret:
-                time.sleep(0.05)
-                continue
+            if cap is not None:
+                ret, frame = cap.read()
+                if not ret:
+                    time.sleep(0.05)
+                    continue
+            else:
+                with browser_frame_lock:
+                    frame = latest_browser_frame
+                    frame_at = latest_browser_frame_at
+                if frame is None:
+                    time.sleep(0.03)
+                    continue
+                now = time.time()
+                if frame_at > no_browser_frame_since:
+                    no_browser_frame_since = frame_at
+                elif now - no_browser_frame_since > BROWSER_FRAME_TIMEOUT_SECONDS:
+                    # The browser stopped sending frames (permission revoked,
+                    # tab backgrounded/closed, network drop) -- say so
+                    # instead of silently freezing on the last good frame.
+                    with state_lock:
+                        state["mode"] = "error"
+                        state["message"] = ("Lost the camera feed from your browser. "
+                                            "Check camera permission and your connection, "
+                                            "then retry.")
+                    time.sleep(0.2)
+                    continue
+                frame = frame.copy()  # never mutate the shared buffer in place
 
+            # The browser sends the RAW (unmirrored) frame; the flip happens
+            # here exactly as it always did for the physical webcam, so
+            # every downstream assumption that the feed is mirrored
+            # (capture_validation.facing_direction, MeasurementEngine's
+            # mirrored=True, etc.) is unaffected by where the frame came from.
             frame = cv2.flip(frame, 1)
             h, w = frame.shape[:2]
             display = frame.copy()
@@ -685,6 +777,12 @@ def camera_loop():
                     display = draw_gate_hud(display, live_gate, view,
                                             fallback_message=None if aligned else msg)
 
+                    if aligned and gate_ok:
+                        if aligned_since is None:
+                            aligned_since = time.time()
+                    else:
+                        aligned_since = None
+
                     with state_lock:
                         if aligned and gate_ok:
                             state["aligned_frames"] += 1
@@ -705,7 +803,9 @@ def camera_loop():
                         else:
                             state["blocking_reasons"] = []
 
-                        if state["aligned_frames"] >= FRAMES_NEEDED_TO_TRIGGER and mode == "aligning":
+                        if (aligned_since is not None
+                                and time.time() - aligned_since >= ALIGN_HOLD_SECONDS
+                                and mode == "aligning"):
                             state["mode"] = "countdown"
                             countdown_start_time = time.time()
 
@@ -827,6 +927,7 @@ def camera_loop():
                                         "view": view, "reason": str(e), "at": time.time()}
                                     state["rejected_at"] = time.time()
                                     countdown_start_time = None
+                                    aligned_since = None
                                     live_gate = None
 
                     with state_lock:
@@ -840,6 +941,7 @@ def camera_loop():
                         state["mode"] = "aligning"
                         state["message"] = "No person detected - step into frame."
                         countdown_start_time = None
+                    aligned_since = None
 
             elif mode == "rejected":
                 # Hold the refusal on screen long enough to read and act on,
@@ -852,6 +954,7 @@ def camera_loop():
                         state["mode"] = "aligning"
                         state["aligned_frames"] = 0
                         countdown_start_time = None
+                        aligned_since = None
                 display = draw_rejection_banner(display, reason)
 
             elif mode == "view_captured":
@@ -870,6 +973,7 @@ def camera_loop():
                             state["countdown_value"] = None
                             state["message"] = VIEW_INSTRUCTIONS[next_view]
                             countdown_start_time = None
+                            aligned_since = None
                         else:
                             state["mode"] = "summary"
                             state["summary"] = build_summary(state["engine"],
@@ -896,7 +1000,8 @@ def camera_loop():
 
             time.sleep(0.03)  # ~30fps cap
 
-    cap.release()
+    if cap is not None:
+        cap.release()
 
 
 def mjpeg_generator():
@@ -940,7 +1045,7 @@ def ensure_camera_running():
 
 
 def stop_camera_thread():
-    global STOP_THREAD, latest_jpeg
+    global STOP_THREAD, latest_jpeg, latest_browser_frame, latest_browser_frame_at
     with camera_thread_lock:
         t = camera_thread
         if t is None or not t.is_alive():
@@ -951,6 +1056,13 @@ def stop_camera_thread():
         t.join(timeout=3)
     with jpeg_lock:
         latest_jpeg = None
+    # Also drop any leftover browser frame: otherwise the NEXT session's
+    # camera_loop() would see a stale, non-None frame on its very first
+    # iteration (with an old timestamp) and briefly process a frame that
+    # belongs to the session that just ended.
+    with browser_frame_lock:
+        latest_browser_frame = None
+        latest_browser_frame_at = 0.0
 
 
 def camera_failed():
@@ -968,6 +1080,45 @@ def index():
 def video_feed():
     ensure_camera_running()
     return Response(mjpeg_generator(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.route("/push_frame", methods=["POST"])
+def push_frame():
+    """CAMERA_MODE=browser: the candidate's browser posts each captured
+    webcam frame here (see frontend/src/services/browserCamera.ts), and
+    camera_loop() consumes it in place of cv2.VideoCapture.read(). This is
+    the one new thing a remote deployment needed: everywhere else in the
+    pipeline (MediaPipe, guidance, capture, measurement, the /video_feed
+    output) already just operates on "the current frame" and does not care
+    where it came from.
+
+    multipart/form-data: image=<JPEG/PNG bytes>. Deliberately not gated on
+    session state (mode=="idle" etc.) -- the browser starts streaming as
+    soon as the camera page opens, slightly before /start has necessarily
+    been called, and an extra frame arriving early is harmless.
+    """
+    file = request.files.get("image")
+    if file is None:
+        return jsonify({"error": "No image file provided (expected multipart field 'image')."}), 400
+
+    data = file.read()
+    if not data:
+        return jsonify({"error": "Empty image upload."}), 400
+
+    arr = np.frombuffer(data, dtype=np.uint8)
+    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if frame is None:
+        return jsonify({"error": "Could not decode image. Expected a JPEG or PNG frame."}), 400
+
+    global latest_browser_frame, latest_browser_frame_at
+    with browser_frame_lock:
+        latest_browser_frame = frame
+        latest_browser_frame_at = time.time()
+
+    # Idempotent: makes /push_frame robust even if the browser starts
+    # uploading before its own /video_feed <img> has requested the stream.
+    ensure_camera_running()
+    return jsonify({"ok": True})
 
 
 @app.route("/stop_camera", methods=["POST"])
@@ -1058,6 +1209,11 @@ def status():
         payload["message"] = "Could not open webcam."
     payload["model"] = state.get("model")
     payload["device_model"] = state.get("device_model")
+    # Tells the frontend whether IT needs to open getUserMedia and start
+    # posting frames to /push_frame ("browser", the default/production
+    # path) or whether the server already owns a physical webcam and the
+    # existing /video_feed stream is all there is to do ("local" dev mode).
+    payload["camera_mode"] = CAMERA_MODE
     payload["last_rejection"] = state.get("last_rejection")
     payload["blocking_reasons"] = list(state.get("blocking_reasons") or [])
     payload["capture_standard"] = CAPTURE_STANDARD
@@ -1457,7 +1613,7 @@ def virtual_try_on_api():
         #    indefinitely -- on timeout the stuck worker is actually killed
         #    (not just abandoned), so the next request gets a clean slate.
         try:
-            output_pil, meta = inference_process_manager.run(
+            output_pil, meta = get_inference_process_manager().run(
                 person_image=person_prep,
                 garment_image=garment_prep,
                 category="tops",
@@ -1507,15 +1663,30 @@ def virtual_try_on_api():
 
 
 if __name__ == "__main__":
-    inference_process_manager = InferenceProcessManager()
+    # Warm-start the try-on worker process now rather than on the first
+    # request, purely so that request doesn't pay the spawn-up latency.
+    # Safe here for the same reason it's safe lazily (see
+    # get_inference_process_manager()): __main__'s own import has already
+    # finished by the time this line runs.
+    get_inference_process_manager()
 
     # The camera thread is started on demand by /start and /video_feed.
-    # No silent fallback port: the frontend is configured with this one
-    # (VITE_SCANNER_API_URL), so a different port would just look offline.
-    port = SCANNER_PORT
-    print(f"Starting Fashion-Show Body Scanner & Virtual Try-On API at http://127.0.0.1:{port}")
+    # PORT is what Render (and most PaaS hosts) actually set; SCANNER_PORT
+    # is this project's own long-standing local-dev variable (also what
+    # frontend/.env's VITE_SCANNER_API_URL is normally pointed at) --
+    # checking PORT first costs nothing locally (it's simply unset there)
+    # and is what makes `gunicorn app:app --bind 0.0.0.0:$PORT` and a
+    # plain `python app.py` agree on which port to use in production.
+    port = int(os.environ.get("PORT", SCANNER_PORT))
+    # 0.0.0.0, not 127.0.0.1: a host's reverse proxy (Render, etc.) connects
+    # to this process from outside its own loopback interface. 127.0.0.1
+    # only accepts connections FROM the same machine, which is exactly
+    # what breaks a "works on my laptop, unreachable when deployed" report.
+    host = os.environ.get("HOST", "0.0.0.0")
+    print(f"Starting Fashion-Show Body Scanner & Virtual Try-On API on {host}:{port} "
+          f"(CAMERA_MODE={CAMERA_MODE})")
     try:
-        app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
+        app.run(host=host, port=port, debug=False, threaded=True)
     finally:
         stop_camera_thread()
 

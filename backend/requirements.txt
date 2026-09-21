@@ -2,8 +2,13 @@
 # (migrated from shirt-new-app-1)
 
 flask>=2.0.0
-# The React frontend calls this API from another origin (Vite dev server).
+# The React frontend calls this API from another origin (Vite dev server,
+# or the deployed Vercel domain in production -- see CORS_ORIGINS).
 flask-cors>=4.0.0
+# Production WSGI server for Render (see render.yaml / the deploy docs for
+# the exact start command). Not used by local `python app.py`, which runs
+# Flask's own dev server directly.
+gunicorn>=21.2.0
 # 4.7+ required: cv2.aruco (used by scale_reference.py / make_marker.py for the
 # printed scale marker) moved into the main opencv-python wheel at 4.7, and the
 # cv2.aruco.ArucoDetector API this project uses is 4.7+ only. No
@@ -28,3 +33,18 @@ huggingface_hub>=0.20.0
 # Optional cloud engine (tried first if OPENAI_API_KEY is set -- see
 # .env.example): pip install openai
 openai>=1.0.0
+
+# --- Render start command ----------------------------------------------
+#   gunicorn app:app --workers 1 --threads 8 --bind 0.0.0.0:$PORT --timeout 120
+#
+# --workers 1 is NOT a suggestion: the scan session (state dict, the
+# current browser-uploaded frame, the camera thread) lives in this one
+# process's memory, not in a database. Multiple gunicorn workers would each
+# get their own independent copy, so a /status poll could land on a
+# different worker than the one /start or /push_frame hit and see stale or
+# empty state. --threads 8 is what lets that single worker still handle
+# concurrent requests (status polling, frame uploads, etc. at once),
+# mirroring the threaded=True already used by `python app.py` locally.
+# Do NOT add --preload: it would import this module (and construct the
+# try-on worker's OS process) once in gunicorn's master before forking,
+# which the fork would then duplicate rather than share.

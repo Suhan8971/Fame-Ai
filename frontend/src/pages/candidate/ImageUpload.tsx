@@ -3,12 +3,25 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { api } from "../../services/api";
 import { scannerApi, scannerUrl } from "../../services/scannerApi";
+import {
+  openCamera, stopCameraStream, captureFrame,
+  listCameraDevices as listBrowserCameras, type CameraDevice,
+} from "../../services/browserCamera";
 import { MeasurementResults } from "../../components/scanner/MeasurementResults";
 import type { ScannerStatus, ScanSummary, ScanView, ScanViewEntry } from "../../types";
 import {
   X, Check, AlertCircle, AlertTriangle, RefreshCw,
-  Camera, BookOpen, RotateCcw, ArrowRight, CheckCircle2
+  Camera, BookOpen, RotateCcw, ArrowRight, CheckCircle2, Video
 } from "lucide-react";
+
+// How often a captured frame is pushed to POST /push_frame while
+// CAMERA_MODE=browser. Deliberately well below the ~20-30fps the physical
+// webcam path reads at: the live guidance (skeleton, HUD, countdown) only
+// needs to feel responsive, not look like a full-motion video, and every
+// pushed frame is a real network upload -- see ALIGN_HOLD_SECONDS in
+// backend/app.py for why the hold-still timer no longer assumes any
+// particular frame rate.
+const FRAME_PUSH_INTERVAL_MS = 130;
 
 // Capture sequence and live guidance come from the body scanner backend
 // (backend/app.py, migrated from shirt-new-app-1). This page only renders its
@@ -60,6 +73,19 @@ export const ImageUpload: React.FC = () => {
   const [viewsData, setViewsData] = useState<Partial<Record<ScanView, ScanViewEntry>>>({});
   const [profileSave, setProfileSave] = useState<{ ok: boolean; text: string } | null>(null);
 
+  // Browser-side camera (CAMERA_MODE=browser, i.e. the backend has no
+  // physical camera of its own -- see backend/app.py). The visible preview
+  // stays exactly what it always was: the backend's own annotated
+  // /video_feed MJPEG stream (skeleton, guidance HUD, countdown baked in
+  // server-side). This <video> is only a hidden frame SOURCE for capture.
+  const [browserCameras, setBrowserCameras] = useState<CameraDevice[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState("");
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const pushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pushingRef = useRef(false);
+  const browserCameraStartedRef = useRef(false);
+
   const pollFailures = useRef(0);
   const finished = useRef(false);
 
@@ -78,15 +104,85 @@ export const ImageUpload: React.FC = () => {
     scannerApi.listCameraDevices().then(setKnownDevices).catch(() => {});
   }, []);
 
+  // Stops the BROWSER's own camera stream (releases the camera light) and
+  // the frame-push loop. Independent of scannerApi.stopCamera(), which only
+  // tells the backend to stop its processing thread -- in CAMERA_MODE=browser
+  // the backend never held the physical device to begin with, so the browser
+  // must release it itself.
+  const stopBrowserCamera = useCallback(() => {
+    if (pushTimerRef.current !== null) {
+      clearInterval(pushTimerRef.current);
+      pushTimerRef.current = null;
+    }
+    stopCameraStream(mediaStreamRef.current);
+    mediaStreamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    browserCameraStartedRef.current = false;
+  }, []);
+
+  const startBrowserCamera = useCallback(async (deviceId?: string) => {
+    stopBrowserCamera();
+    try {
+      const stream = await openCamera(deviceId);
+      mediaStreamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => {});
+      }
+      browserCameraStartedRef.current = true;
+      setCameraError(null);
+
+      pushTimerRef.current = setInterval(async () => {
+        if (pushingRef.current) return; // don't stack uploads if one is slow
+        const video = videoRef.current;
+        if (!video) return;
+        pushingRef.current = true;
+        try {
+          const blob = await captureFrame(video);
+          if (blob) await scannerApi.pushFrame(blob);
+        } catch {
+          // A single dropped/failed frame upload is not worth surfacing --
+          // /status polling is what actually reports a dead feed
+          // (mode: "error") if uploads stop working altogether.
+        } finally {
+          pushingRef.current = false;
+        }
+      }, FRAME_PUSH_INTERVAL_MS);
+
+      listBrowserCameras().then(setBrowserCameras).catch(() => {});
+    } catch (err) {
+      setCameraError(err instanceof Error ? err.message : "Could not access the camera.");
+    }
+  }, [stopBrowserCamera]);
+
   // Release the webcam whenever this page is left, including closing the tab.
   useEffect(() => {
-    const onPageHide = () => navigator.sendBeacon?.(scannerUrl("/stop_camera"));
+    const onPageHide = () => {
+      navigator.sendBeacon?.(scannerUrl("/stop_camera"));
+      stopCameraStream(mediaStreamRef.current);
+    };
     window.addEventListener("pagehide", onPageHide);
     return () => {
       window.removeEventListener("pagehide", onPageHide);
       scannerApi.stopCamera().catch(() => {});
+      stopBrowserCamera();
     };
-  }, []);
+  }, [stopBrowserCamera]);
+
+  // Start the browser's own camera once we know the backend actually needs
+  // it (CAMERA_MODE=browser -- i.e. it has no physical camera of its own,
+  // as on a Render deployment). CAMERA_MODE=local (a developer's laptop
+  // running the Flask server against its own webcam) never triggers this;
+  // /video_feed alone is enough there, exactly as it always was.
+  useEffect(() => {
+    if (phase !== "camera") {
+      if (browserCameraStartedRef.current) stopBrowserCamera();
+      return;
+    }
+    if (status?.camera_mode === "browser" && !browserCameraStartedRef.current) {
+      startBrowserCamera();
+    }
+  }, [phase, status?.camera_mode, startBrowserCamera, stopBrowserCamera]);
 
   const modelIdentity = useCallback(
     () =>
@@ -140,7 +236,10 @@ export const ImageUpload: React.FC = () => {
         pollFailures.current = 0;
         setStatus(data);
         if (data.mode === "error") {
-          setCameraError(WEBCAM_ERROR);
+          // The backend now says WHY (no physical webcam vs. lost the
+          // browser's feed vs. never got a first frame) -- show that
+          // instead of a message that assumed a server-side camera.
+          setCameraError(data.message || WEBCAM_ERROR);
         } else if (recovered) {
           // Server is reachable again: drop the error and reopen the stream.
           setCameraError(null);
@@ -214,7 +313,17 @@ export const ImageUpload: React.FC = () => {
   const handleRetry = async () => {
     setActionBusy(true);
     try {
-      await beginSession();
+      // Two independent things can have failed here: the backend session
+      // (mode: "error"/unreachable /status) or, in CAMERA_MODE=browser, the
+      // browser's OWN camera (permission denied, device busy, etc.) -- retry
+      // whichever is actually down rather than always restarting the whole
+      // session, which would otherwise needlessly re-prompt for camera
+      // permission even when the backend was the only thing that dropped.
+      if (status?.camera_mode === "browser" && !mediaStreamRef.current) {
+        await startBrowserCamera(selectedCameraId || undefined);
+      } else {
+        await beginSession();
+      }
     } catch (err) {
       setCameraError(err instanceof Error ? err.message : "Could not reach the server.");
     } finally {
@@ -517,6 +626,32 @@ export const ImageUpload: React.FC = () => {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {/* Only shown when the browser actually reports more than one
+                  camera (CAMERA_MODE=browser) -- e.g. a laptop with both a
+                  built-in and an external webcam, or a phone's front/back
+                  pair not already resolved by the environment-facing default. */}
+              {status?.camera_mode === "browser" && browserCameras.length > 1 && (
+                <div className="flex items-center gap-1.5 px-2 bg-slate-900/50 border border-white/5 rounded-xl">
+                  <Video className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <select
+                    value={selectedCameraId}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setSelectedCameraId(id);
+                      startBrowserCamera(id || undefined);
+                    }}
+                    className="bg-transparent text-xs font-semibold text-slate-300 py-2 pr-1 cursor-pointer focus:outline-none"
+                    title="Switch camera"
+                  >
+                    <option value="" className="bg-slate-950">Default camera</option>
+                    {browserCameras.map((d) => (
+                      <option key={d.deviceId} value={d.deviceId} className="bg-slate-950">
+                        {d.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={handleRetakeCurrent}
@@ -577,6 +712,19 @@ export const ImageUpload: React.FC = () => {
                   guidance (landmarks, measurement lines, READY / blocking HUD,
                   countdown) across the whole frame, so cropping would hide it. */}
               <div className="relative w-full rounded-3xl bg-slate-950 border border-white/5 overflow-hidden flex items-center justify-center shadow-inner min-h-[260px]">
+                {/* Hidden frame SOURCE only (CAMERA_MODE=browser) -- never
+                    shown directly. The visible preview stays the backend's
+                    own annotated /video_feed <img> below, which already has
+                    the skeleton/HUD/countdown baked in server-side; this
+                    <video> just feeds captureFrame() -> POST /push_frame. */}
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="hidden"
+                  aria-hidden="true"
+                />
                 {cameraError ? (
                   <div className="p-8 text-center max-w-sm space-y-3">
                     <AlertCircle className="w-10 h-10 text-red-500 mx-auto mb-1" />

@@ -79,6 +79,19 @@ export const scannerApi = {
 
   stopCamera: () => postJson<{ ok: boolean }>("/stop_camera"),
 
+  // One frame captured from the candidate's own browser camera
+  // (services/browserCamera.ts), for backend/app.py's CAMERA_MODE=browser.
+  // camera_loop() there consumes this in place of cv2.VideoCapture.read(),
+  // which is what lets the scanner work when the Flask backend has no
+  // physical camera attached (e.g. deployed on Render). Fire-and-forget by
+  // design: the caller polls /status for the actual guidance/result, so a
+  // single dropped frame upload is never worth surfacing as an error.
+  pushFrame: (blob: Blob) => {
+    const formData = new FormData();
+    formData.append("image", blob, "frame.jpg");
+    return request<{ ok: boolean }>("/push_frame", { method: "POST", body: formData });
+  },
+
   saveGroundTruth: (tape: Record<string, number>) =>
     postJson<{ ok: boolean; recorded: string[] }>("/ground_truth", { tape }),
 
