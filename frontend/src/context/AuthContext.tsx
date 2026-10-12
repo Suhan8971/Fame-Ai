@@ -19,27 +19,30 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Starting values for a new model's profile form. They only initialise the
-// UI: none of them count as confirmed until the model saves the profile
-// (profile_confirmed_at) and confirms their measurements (measurements_confirmed_at).
+// Starting values for a brand-new model's profile form -- blank except for
+// the name/email already known from their account, so a new account never
+// shows another model's (or a shared demo) height/weight/measurements. Real
+// values only appear here once this specific user has saved their own
+// (profile_confirmed_at) and confirmed their measurements
+// (measurements_confirmed_at).
 const defaultProfile = (user: User): CandidateProfile => ({
   first_name: user.first_name,
   last_name: user.last_name,
-  gender: "female",
+  gender: "",
   birth_date: "",
-  height: 175,
-  weight: 60,
+  height: null,
+  weight: null,
   preferred_units: "metric",
   phone_number: "",
-  chest: 90,
-  shoulder: 42,
-  left_arm: 60,
-  right_arm: 60,
-  abdomen: 74,
-  waist: 66,
-  hips: 94,
-  left_thigh: 52,
-  right_thigh: 52,
+  chest: null,
+  shoulder: null,
+  left_arm: null,
+  right_arm: null,
+  abdomen: null,
+  waist: null,
+  hips: null,
+  left_thigh: null,
+  right_thigh: null,
   user_id: user.id,
   email: user.email,
   profile_confirmed_at: null,

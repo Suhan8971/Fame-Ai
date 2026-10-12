@@ -28,67 +28,78 @@ export const ProfileCompletion: React.FC = () => {
     loadWorkflowData();
   }, [loadWorkflowData]);
 
+  // A new candidate's own fields start blank ("") -- not pre-filled with
+  // another model's or a shared demo's values -- until this account's saved
+  // profile (if any) loads in the sync effect below, or the model types
+  // their own values in.
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [gender, setGender] = useState("female");
+  const [gender, setGender] = useState("");
   const [birthDate, setBirthDate] = useState("");
-  const [height, setHeight] = useState(175); // stored in cm
-  const [weight, setWeight] = useState(60);  // stored in kg
+  const [height, setHeight] = useState<number | "">(""); // stored in cm
+  const [weight, setWeight] = useState<number | "">("");  // stored in kg
   const [units, setUnits] = useState<"metric" | "imperial">("metric");
   const [phone, setPhone] = useState("");
 
   // New anatomical fields (in cm)
-  const [chest, setChest] = useState(90);
-  const [shoulder, setShoulder] = useState(42);
-  const [leftArm, setLeftArm] = useState(60);
-  const [rightArm, setRightArm] = useState(60);
-  const [abdomen, setAbdomen] = useState(74);
-  const [waist, setWaist] = useState(66);
-  const [hips, setHips] = useState(94);
-  const [leftThigh, setLeftThigh] = useState(52);
-  const [rightThigh, setRightThigh] = useState(52);
+  const [chest, setChest] = useState<number | "">("");
+  const [shoulder, setShoulder] = useState<number | "">("");
+  const [leftArm, setLeftArm] = useState<number | "">("");
+  const [rightArm, setRightArm] = useState<number | "">("");
+  const [abdomen, setAbdomen] = useState<number | "">("");
+  const [waist, setWaist] = useState<number | "">("");
+  const [hips, setHips] = useState<number | "">("");
+  const [leftThigh, setLeftThigh] = useState<number | "">("");
+  const [rightThigh, setRightThigh] = useState<number | "">("");
 
   // Imperial units states
-  const [heightFt, setHeightFt] = useState(5);
-  const [heightIn, setHeightIn] = useState(9);
-  const [weightLbs, setWeightLbs] = useState(132);
-  
-  const [chestIn, setChestIn] = useState(35.4);
-  const [shoulderIn, setShoulderIn] = useState(16.5);
-  const [leftArmIn, setLeftArmIn] = useState(23.6);
-  const [rightArmIn, setRightArmIn] = useState(23.6);
-  const [abdomenIn, setAbdomenIn] = useState(29.1);
-  const [waistIn, setWaistIn] = useState(26.0);
-  const [hipsIn, setHipsIn] = useState(37.0);
-  const [leftThighIn, setLeftThighIn] = useState(20.5);
-  const [rightThighIn, setRightThighIn] = useState(20.5);
+  const [heightFt, setHeightFt] = useState<number | "">("");
+  const [heightIn, setHeightIn] = useState<number | "">("");
+  const [weightLbs, setWeightLbs] = useState<number | "">("");
+
+  const [chestIn, setChestIn] = useState<number | "">("");
+  const [shoulderIn, setShoulderIn] = useState<number | "">("");
+  const [leftArmIn, setLeftArmIn] = useState<number | "">("");
+  const [rightArmIn, setRightArmIn] = useState<number | "">("");
+  const [abdomenIn, setAbdomenIn] = useState<number | "">("");
+  const [waistIn, setWaistIn] = useState<number | "">("");
+  const [hipsIn, setHipsIn] = useState<number | "">("");
+  const [leftThighIn, setLeftThighIn] = useState<number | "">("");
+  const [rightThighIn, setRightThighIn] = useState<number | "">("");
+
+  // cm <-> in helpers that preserve "blank" instead of turning it into 0.
+  const cmToIn = (cm: number | ""): number | "" => (cm === "" ? "" : Math.round((cm / 2.54) * 10) / 10);
+  const inToCm = (inches: number | ""): number | "" => (inches === "" ? "" : Math.round(inches * 2.54 * 10) / 10);
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  // Sync state with existing profile
+  // Sync state with this account's own saved profile. A brand-new profile
+  // (see defaultProfile() in AuthContext) has every one of these fields
+  // null/"", so a new user correctly sees blank inputs here, not another
+  // user's or a shared demo's numbers.
   useEffect(() => {
     if (profile) {
       setFirstName(profile.first_name || "");
       setLastName(profile.last_name || "");
-      setGender(profile.gender || "female");
+      setGender(profile.gender || "");
       setBirthDate(profile.birth_date || "");
-      setHeight(Number(profile.height) || 175);
-      setWeight(Number(profile.weight) || 60);
+      setHeight(profile.height ?? "");
+      setWeight(profile.weight ?? "");
       setUnits(profile.preferred_units || "metric");
       setPhone(profile.phone_number || "");
       setMeasurementsConfirmed(!!profile.measurements_confirmed_at);
 
       // Setup measurements
-      const ch = Number(profile.chest) || 90;
-      const sh = Number(profile.shoulder) || 42;
-      const la = Number(profile.left_arm) || 60;
-      const ra = Number(profile.right_arm) || 60;
-      const ab = Number(profile.abdomen) || 74;
-      const wa = Number(profile.waist) || 66;
-      const hp = Number(profile.hips) || 94;
-      const lt = Number(profile.left_thigh) || 52;
-      const rt = Number(profile.right_thigh) || 52;
+      const ch = profile.chest ?? "";
+      const sh = profile.shoulder ?? "";
+      const la = profile.left_arm ?? "";
+      const ra = profile.right_arm ?? "";
+      const ab = profile.abdomen ?? "";
+      const wa = profile.waist ?? "";
+      const hp = profile.hips ?? "";
+      const lt = profile.left_thigh ?? "";
+      const rt = profile.right_thigh ?? "";
 
       setChest(ch);
       setShoulder(sh);
@@ -100,89 +111,103 @@ export const ProfileCompletion: React.FC = () => {
       setLeftThigh(lt);
       setRightThigh(rt);
 
-      // Initial conversion for imperial
-      const cm = Number(profile.height) || 175;
-      const kg = Number(profile.weight) || 60;
-      
-      const totalInches = cm / 2.54;
-      setHeightFt(Math.floor(totalInches / 12));
-      setHeightIn(Math.round(totalInches % 12));
-      setWeightLbs(Math.round(kg * 2.20462));
+      // Initial conversion for imperial (blank stays blank)
+      const cm = profile.height ?? "";
+      const kg = profile.weight ?? "";
 
-      setChestIn(Math.round(ch / 2.54 * 10) / 10);
-      setShoulderIn(Math.round(sh / 2.54 * 10) / 10);
-      setLeftArmIn(Math.round(la / 2.54 * 10) / 10);
-      setRightArmIn(Math.round(ra / 2.54 * 10) / 10);
-      setAbdomenIn(Math.round(ab / 2.54 * 10) / 10);
-      setWaistIn(Math.round(wa / 2.54 * 10) / 10);
-      setHipsIn(Math.round(hp / 2.54 * 10) / 10);
-      setLeftThighIn(Math.round(lt / 2.54 * 10) / 10);
-      setRightThighIn(Math.round(rt / 2.54 * 10) / 10);
+      if (cm !== "") {
+        const totalInches = cm / 2.54;
+        setHeightFt(Math.floor(totalInches / 12));
+        setHeightIn(Math.round(totalInches % 12));
+      } else {
+        setHeightFt("");
+        setHeightIn("");
+      }
+      setWeightLbs(kg === "" ? "" : Math.round(kg * 2.20462));
+
+      setChestIn(cmToIn(ch));
+      setShoulderIn(cmToIn(sh));
+      setLeftArmIn(cmToIn(la));
+      setRightArmIn(cmToIn(ra));
+      setAbdomenIn(cmToIn(ab));
+      setWaistIn(cmToIn(wa));
+      setHipsIn(cmToIn(hp));
+      setLeftThighIn(cmToIn(lt));
+      setRightThighIn(cmToIn(rt));
     }
   }, [profile]);
 
-  // Handle Conversions when units system changes
+  // Handle Conversions when units system changes (blank fields stay blank)
   const handleUnitChange = (newUnits: "metric" | "imperial") => {
     setUnits(newUnits);
     if (newUnits === "imperial") {
       // CM -> Feet & Inches
-      const totalInches = height / 2.54;
-      setHeightFt(Math.floor(totalInches / 12));
-      setHeightIn(Math.round(totalInches % 12));
+      if (height !== "") {
+        const totalInches = height / 2.54;
+        setHeightFt(Math.floor(totalInches / 12));
+        setHeightIn(Math.round(totalInches % 12));
+      } else {
+        setHeightFt("");
+        setHeightIn("");
+      }
       // KG -> Lbs
-      setWeightLbs(Math.round(weight * 2.20462));
+      setWeightLbs(weight === "" ? "" : Math.round(weight * 2.20462));
 
       // CM -> Inches
-      setChestIn(Math.round(chest / 2.54 * 10) / 10);
-      setShoulderIn(Math.round(shoulder / 2.54 * 10) / 10);
-      setLeftArmIn(Math.round(leftArm / 2.54 * 10) / 10);
-      setRightArmIn(Math.round(rightArm / 2.54 * 10) / 10);
-      setAbdomenIn(Math.round(abdomen / 2.54 * 10) / 10);
-      setWaistIn(Math.round(waist / 2.54 * 10) / 10);
-      setHipsIn(Math.round(hips / 2.54 * 10) / 10);
-      setLeftThighIn(Math.round(leftThigh / 2.54 * 10) / 10);
-      setRightThighIn(Math.round(rightThigh / 2.54 * 10) / 10);
+      setChestIn(cmToIn(chest));
+      setShoulderIn(cmToIn(shoulder));
+      setLeftArmIn(cmToIn(leftArm));
+      setRightArmIn(cmToIn(rightArm));
+      setAbdomenIn(cmToIn(abdomen));
+      setWaistIn(cmToIn(waist));
+      setHipsIn(cmToIn(hips));
+      setLeftThighIn(cmToIn(leftThigh));
+      setRightThighIn(cmToIn(rightThigh));
     } else {
       // Imperial -> Metric
-      const cmVal = Math.round((heightFt * 12 + heightIn) * 2.54 * 10) / 10;
-      const kgVal = Math.round((weightLbs / 2.20462) * 10) / 10;
-      setHeight(cmVal);
-      setWeight(kgVal);
+      if (heightFt !== "" && heightIn !== "") {
+        setHeight(Math.round((heightFt * 12 + heightIn) * 2.54 * 10) / 10);
+      }
+      setWeight(weightLbs === "" ? "" : Math.round((weightLbs / 2.20462) * 10) / 10);
 
-      setChest(Math.round(chestIn * 2.54 * 10) / 10);
-      setShoulder(Math.round(shoulderIn * 2.54 * 10) / 10);
-      setLeftArm(Math.round(leftArmIn * 2.54 * 10) / 10);
-      setRightArm(Math.round(rightArmIn * 2.54 * 10) / 10);
-      setAbdomen(Math.round(abdomenIn * 2.54 * 10) / 10);
-      setWaist(Math.round(waistIn * 2.54 * 10) / 10);
-      setHips(Math.round(hipsIn * 2.54 * 10) / 10);
-      setLeftThigh(Math.round(leftThighIn * 2.54 * 10) / 10);
-      setRightThigh(Math.round(rightThighIn * 2.54 * 10) / 10);
+      setChest(inToCm(chestIn));
+      setShoulder(inToCm(shoulderIn));
+      setLeftArm(inToCm(leftArmIn));
+      setRightArm(inToCm(rightArmIn));
+      setAbdomen(inToCm(abdomenIn));
+      setWaist(inToCm(waistIn));
+      setHips(inToCm(hipsIn));
+      setLeftThigh(inToCm(leftThighIn));
+      setRightThigh(inToCm(rightThighIn));
     }
   };
 
-  const handleHeightImperialChange = (ft: number, inches: number) => {
+  const handleHeightImperialChange = (ft: number | "", inches: number | "") => {
     setHeightFt(ft);
     setHeightIn(inches);
-    const cmVal = Math.round((ft * 12 + inches) * 2.54 * 10) / 10;
-    setHeight(cmVal);
+    if (ft !== "" && inches !== "") {
+      setHeight(Math.round((ft * 12 + inches) * 2.54 * 10) / 10);
+    }
   };
 
-  const handleWeightImperialChange = (lbs: number) => {
+  const handleWeightImperialChange = (lbs: number | "") => {
     setWeightLbs(lbs);
-    const kgVal = Math.round((lbs / 2.20462) * 10) / 10;
-    setWeight(kgVal);
+    setWeight(lbs === "" ? "" : Math.round((lbs / 2.20462) * 10) / 10);
   };
 
-  // Dual unit update helpers for form inputs
-  const makeValHandlers = (setMetric: (v: number) => void, setImperial: (v: number) => void) => ({
-    onMetricChange: (v: number) => {
+  // Dual unit update helpers for form inputs. Each takes the raw input
+  // string so clearing a field (empty string) stays blank instead of
+  // becoming 0.
+  const makeValHandlers = (setMetric: (v: number | "") => void, setImperial: (v: number | "") => void) => ({
+    onMetricChange: (raw: string) => {
+      const v: number | "" = raw === "" ? "" : Number(raw);
       setMetric(v);
-      setImperial(Math.round(v / 2.54 * 10) / 10);
+      setImperial(cmToIn(v));
     },
-    onImperialChange: (v: number) => {
+    onImperialChange: (raw: string) => {
+      const v: number | "" = raw === "" ? "" : Number(raw);
       setImperial(v);
-      setMetric(Math.round(v * 2.54 * 10) / 10);
+      setMetric(inToCm(v));
     }
   });
 
@@ -202,6 +227,10 @@ export const ProfileCompletion: React.FC = () => {
     setMessage("");
 
     try {
+      // All of these inputs are HTML-required, so a genuine submit always
+      // has real numbers -- "" (unset) only survives here if validation was
+      // bypassed, in which case it's saved as null rather than a stray "".
+      const n = (v: number | ""): number | null => (v === "" ? null : v);
       const nowStamp = new Date().toISOString();
       await updateProfile({
         email: user?.email,
@@ -212,19 +241,19 @@ export const ProfileCompletion: React.FC = () => {
         last_name: lastName,
         gender,
         birth_date: birthDate,
-        height,
-        weight,
+        height: n(height),
+        weight: n(weight),
         preferred_units: units,
         phone_number: phone,
-        chest,
-        shoulder,
-        left_arm: leftArm,
-        right_arm: rightArm,
-        abdomen,
-        waist,
-        hips,
-        left_thigh: leftThigh,
-        right_thigh: rightThigh,
+        chest: n(chest),
+        shoulder: n(shoulder),
+        left_arm: n(leftArm),
+        right_arm: n(rightArm),
+        abdomen: n(abdomen),
+        waist: n(waist),
+        hips: n(hips),
+        left_thigh: n(leftThigh),
+        right_thigh: n(rightThigh),
       });
       setMessage("Profile details saved successfully.");
       // New models continue to the scan; models who already scanned stay here
@@ -365,10 +394,12 @@ export const ProfileCompletion: React.FC = () => {
               <div>
                 <label className="block text-[11px] font-semibold text-slate-400 mb-1">Gender / Audition Category</label>
                 <select
+                  required
                   value={gender}
                   onChange={(e) => setGender(e.target.value)}
                   className="glass-input px-3.5 py-2.5 w-full rounded-xl text-xs cursor-pointer select-none"
                 >
+                  <option value="" disabled className="bg-slate-950">Select Gender</option>
                   <option value="female" className="bg-slate-950">Female</option>
                   <option value="male" className="bg-slate-950">Male</option>
                   <option value="non-binary" className="bg-slate-950">Non-Binary</option>
@@ -400,7 +431,7 @@ export const ProfileCompletion: React.FC = () => {
                       min={120}
                       max={250}
                       value={height}
-                      onChange={(e) => setHeight(Number(e.target.value))}
+                      onChange={(e) => setHeight(e.target.value === "" ? "" : Number(e.target.value))}
                       className="glass-input px-3.5 py-2.5 w-full rounded-xl text-xs"
                     />
                     <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-500 text-[10px] font-bold select-none">
@@ -416,7 +447,7 @@ export const ProfileCompletion: React.FC = () => {
                         min={3}
                         max={8}
                         value={heightFt}
-                        onChange={(e) => handleHeightImperialChange(Number(e.target.value), heightIn)}
+                        onChange={(e) => handleHeightImperialChange(e.target.value === "" ? "" : Number(e.target.value), heightIn)}
                         className="glass-input py-2.5 w-full rounded-xl text-xs text-center font-semibold"
                       />
                       <div className="absolute inset-y-0 right-3.5 flex items-center text-[10px] text-slate-500 font-bold">ft</div>
@@ -428,7 +459,7 @@ export const ProfileCompletion: React.FC = () => {
                         min={0}
                         max={11}
                         value={heightIn}
-                        onChange={(e) => handleHeightImperialChange(heightFt, Number(e.target.value))}
+                        onChange={(e) => handleHeightImperialChange(heightFt, e.target.value === "" ? "" : Number(e.target.value))}
                         className="glass-input py-2.5 w-full rounded-xl text-xs text-center font-semibold"
                       />
                       <div className="absolute inset-y-0 right-3.5 flex items-center text-[10px] text-slate-500 font-bold">in</div>
@@ -451,7 +482,7 @@ export const ProfileCompletion: React.FC = () => {
                         min={30}
                         max={200}
                         value={weight}
-                        onChange={(e) => setWeight(Number(e.target.value))}
+                        onChange={(e) => setWeight(e.target.value === "" ? "" : Number(e.target.value))}
                         className="glass-input px-3.5 py-2.5 w-full rounded-xl text-xs"
                       />
                       <div className="absolute inset-y-0 right-3.5 flex items-center text-slate-500 text-[10px] font-bold select-none">
@@ -466,7 +497,7 @@ export const ProfileCompletion: React.FC = () => {
                         min={60}
                         max={450}
                         value={weightLbs}
-                        onChange={(e) => handleWeightImperialChange(Number(e.target.value))}
+                        onChange={(e) => handleWeightImperialChange(e.target.value === "" ? "" : Number(e.target.value))}
                         className="glass-input px-3.5 py-2.5 w-full rounded-xl text-xs"
                       />
                       <div className="absolute inset-y-0 right-3.5 flex items-center text-slate-500 text-[10px] font-bold select-none">
@@ -509,8 +540,8 @@ export const ProfileCompletion: React.FC = () => {
                     value={units === "metric" ? chest : chestIn}
                     onChange={(e) => 
                       units === "metric" 
-                        ? chestHandlers.onMetricChange(Number(e.target.value))
-                        : chestHandlers.onImperialChange(Number(e.target.value))
+                        ? chestHandlers.onMetricChange(e.target.value)
+                        : chestHandlers.onImperialChange(e.target.value)
                     }
                     className="glass-input px-3.5 py-2 w-full rounded-xl text-xs text-center font-medium"
                   />
@@ -530,8 +561,8 @@ export const ProfileCompletion: React.FC = () => {
                     value={units === "metric" ? shoulder : shoulderIn}
                     onChange={(e) => 
                       units === "metric" 
-                        ? shoulderHandlers.onMetricChange(Number(e.target.value))
-                        : shoulderHandlers.onImperialChange(Number(e.target.value))
+                        ? shoulderHandlers.onMetricChange(e.target.value)
+                        : shoulderHandlers.onImperialChange(e.target.value)
                     }
                     className="glass-input px-3.5 py-2 w-full rounded-xl text-xs text-center font-medium"
                   />
@@ -551,8 +582,8 @@ export const ProfileCompletion: React.FC = () => {
                     value={units === "metric" ? waist : waistIn}
                     onChange={(e) => 
                       units === "metric" 
-                        ? waistHandlers.onMetricChange(Number(e.target.value))
-                        : waistHandlers.onImperialChange(Number(e.target.value))
+                        ? waistHandlers.onMetricChange(e.target.value)
+                        : waistHandlers.onImperialChange(e.target.value)
                     }
                     className="glass-input px-3.5 py-2 w-full rounded-xl text-xs text-center font-medium"
                   />
@@ -572,8 +603,8 @@ export const ProfileCompletion: React.FC = () => {
                     value={units === "metric" ? leftArm : leftArmIn}
                     onChange={(e) => 
                       units === "metric" 
-                        ? leftArmHandlers.onMetricChange(Number(e.target.value))
-                        : leftArmHandlers.onImperialChange(Number(e.target.value))
+                        ? leftArmHandlers.onMetricChange(e.target.value)
+                        : leftArmHandlers.onImperialChange(e.target.value)
                     }
                     className="glass-input px-3.5 py-2 w-full rounded-xl text-xs text-center font-medium"
                   />
@@ -593,8 +624,8 @@ export const ProfileCompletion: React.FC = () => {
                     value={units === "metric" ? rightArm : rightArmIn}
                     onChange={(e) => 
                       units === "metric" 
-                        ? rightArmHandlers.onMetricChange(Number(e.target.value))
-                        : rightArmHandlers.onImperialChange(Number(e.target.value))
+                        ? rightArmHandlers.onMetricChange(e.target.value)
+                        : rightArmHandlers.onImperialChange(e.target.value)
                     }
                     className="glass-input px-3.5 py-2 w-full rounded-xl text-xs text-center font-medium"
                   />
@@ -614,8 +645,8 @@ export const ProfileCompletion: React.FC = () => {
                     value={units === "metric" ? abdomen : abdomenIn}
                     onChange={(e) => 
                       units === "metric" 
-                        ? abdomenHandlers.onMetricChange(Number(e.target.value))
-                        : abdomenHandlers.onImperialChange(Number(e.target.value))
+                        ? abdomenHandlers.onMetricChange(e.target.value)
+                        : abdomenHandlers.onImperialChange(e.target.value)
                     }
                     className="glass-input px-3.5 py-2 w-full rounded-xl text-xs text-center font-medium"
                   />
@@ -635,8 +666,8 @@ export const ProfileCompletion: React.FC = () => {
                     value={units === "metric" ? hips : hipsIn}
                     onChange={(e) => 
                       units === "metric" 
-                        ? hipsHandlers.onMetricChange(Number(e.target.value))
-                        : hipsHandlers.onImperialChange(Number(e.target.value))
+                        ? hipsHandlers.onMetricChange(e.target.value)
+                        : hipsHandlers.onImperialChange(e.target.value)
                     }
                     className="glass-input px-3.5 py-2 w-full rounded-xl text-xs text-center font-medium"
                   />
@@ -656,8 +687,8 @@ export const ProfileCompletion: React.FC = () => {
                     value={units === "metric" ? leftThigh : leftThighIn}
                     onChange={(e) => 
                       units === "metric" 
-                        ? leftThighHandlers.onMetricChange(Number(e.target.value))
-                        : leftThighHandlers.onImperialChange(Number(e.target.value))
+                        ? leftThighHandlers.onMetricChange(e.target.value)
+                        : leftThighHandlers.onImperialChange(e.target.value)
                     }
                     className="glass-input px-3.5 py-2 w-full rounded-xl text-xs text-center font-medium"
                   />
@@ -677,8 +708,8 @@ export const ProfileCompletion: React.FC = () => {
                     value={units === "metric" ? rightThigh : rightThighIn}
                     onChange={(e) => 
                       units === "metric" 
-                        ? rightThighHandlers.onMetricChange(Number(e.target.value))
-                        : rightThighHandlers.onImperialChange(Number(e.target.value))
+                        ? rightThighHandlers.onMetricChange(e.target.value)
+                        : rightThighHandlers.onImperialChange(e.target.value)
                     }
                     className="glass-input px-3.5 py-2 w-full rounded-xl text-xs text-center font-medium"
                   />

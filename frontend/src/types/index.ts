@@ -11,22 +11,22 @@ export interface User {
 export interface CandidateProfile {
   first_name: string;
   last_name: string;
-  gender: string;
+  gender: string; // "" until the model selects one
   birth_date: string;
-  height: number; // always stored in cm
-  weight: number; // always stored in kg
+  height: number | null; // always stored in cm; null until the model enters it
+  weight: number | null; // always stored in kg; null until the model enters it
   preferred_units: "metric" | "imperial";
   phone_number: string;
   avatar_url?: string | null;
-  chest?: number;
-  shoulder?: number;
-  left_arm?: number;
-  right_arm?: number;
-  abdomen?: number;
-  waist?: number;
-  hips?: number;
-  left_thigh?: number;
-  right_thigh?: number;
+  chest?: number | null;
+  shoulder?: number | null;
+  left_arm?: number | null;
+  right_arm?: number | null;
+  abdomen?: number | null;
+  waist?: number | null;
+  hips?: number | null;
+  left_thigh?: number | null;
+  right_thigh?: number | null;
   age?: number;
   body_category?: string;
   // Recruitment workflow (all stored in localStorage)

@@ -91,7 +91,7 @@ export const CampaignBoard: React.FC = () => {
     });
     checks.push({
       label: `Height: ${c.min_height}–${c.max_height} cm`,
-      ok: heightCm === undefined ? null : heightCm >= c.min_height && heightCm <= c.max_height,
+      ok: heightCm == null ? null : heightCm >= c.min_height && heightCm <= c.max_height,
     });
     if (c.min_age || c.max_age) {
       const range = `${c.min_age ?? "any"}–${c.max_age ?? "any"}`;
