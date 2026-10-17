@@ -52,6 +52,7 @@ from flask import Flask, Response, request, jsonify
 from flask_cors import CORS
 
 import model_store
+import application_store
 import auth_store
 from shirt_outline_detector import get_torso_box, segment_shirt_grabcut, draw_shirt_outline
 from measurements import compute_measurements, MeasurementError
@@ -324,8 +325,10 @@ def framing_guidance(seg_mask, frame_h, frame_w):
         return False, "Your FEET are cut off - step back.", None
     if top <= LIVE_BORDER_MARGIN_PX:
         return False, "The top of your HEAD is cut off - step back.", None
-    if left <= LIVE_BORDER_MARGIN_PX or right >= frame_w - 1 - LIVE_BORDER_MARGIN_PX:
-        return False, "You are touching the side of the frame - move in.", None
+    if left <= LIVE_BORDER_MARGIN_PX:
+        return False, "Move to your right to reach the centre of the frame.", None
+    if right >= frame_w - 1 - LIVE_BORDER_MARGIN_PX:
+        return False, "Move to your left to reach the centre of the frame.", None
 
     frac = (bottom - top) / float(frame_h)
     if frac < LIVE_MIN_STATURE_FRAC:
@@ -374,7 +377,8 @@ def check_alignment(landmarks, frame_w, frame_h, seg_mask=None):
 
     center_x = (l_sh.x + r_sh.x) / 2
     if center_x < 0.32 or center_x > 0.68:
-        return False, "Move to the centre of the frame."
+        direction = "right" if center_x < 0.32 else "left"
+        return False, f"Move to your {direction} to reach the centre of the frame."
 
     l_wrist = lm[mp_pose.PoseLandmark.LEFT_WRIST]
     r_wrist = lm[mp_pose.PoseLandmark.RIGHT_WRIST]
@@ -426,7 +430,8 @@ def check_side_alignment(landmarks, frame_w, frame_h, side, seg_mask=None):
 
     near_sh = lm[near_shoulder]
     if near_sh.x < 0.32 or near_sh.x > 0.68:
-        return False, "Move to the centre of the frame."
+        direction = "right" if near_sh.x < 0.32 else "left"
+        return False, f"Move to your {direction} to reach the centre of the frame."
 
     if lm[near_wrist].y < near_sh.y:
         return False, "Relax your arm down by your side."
@@ -1452,12 +1457,35 @@ def save_model_session():
 
 @app.route("/api/models", methods=["GET"])
 def list_models():
-    """Models that have a stored capture session, for the Recruiters section."""
+    """Return only scanned candidates with a fit-checked campaign shortlist."""
     return jsonify({"models": model_store.list_models()})
+
+
+@app.route("/api/models/applications", methods=["POST"])
+def sync_model_application():
+    """Record a fit-checked campaign application and its recruiter status."""
+    data = request.get_json(silent=True) or {}
+    try:
+        application_store.record_application(
+            data.get("application_id"),
+            data.get("candidate_id"),
+            data.get("campaign_id"),
+            data.get("status"),
+            data.get("fit_check_completed"),
+            data.get("event"),
+        )
+    except application_store.ApplicationStoreError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True})
 
 
 @app.route("/api/models/<model_id>", methods=["GET"])
 def get_model(model_id):
+    try:
+        if not application_store.has_application(model_id):
+            return jsonify({"error": "No campaign application is registered for this candidate."}), 404
+    except application_store.ApplicationStoreError as e:
+        return jsonify({"error": str(e)}), 400
     try:
         record = model_store.load_session(model_id)
     except model_store.ModelStoreError as e:
@@ -1551,6 +1579,10 @@ def virtual_try_on_api():
         # 1. Validate front-view capture existence
         model_id = request.form.get("model_id")
         if model_id:
+            if not application_store.is_shortlisted(model_id):
+                return jsonify({
+                    "error": "Virtual try-on is available only for candidates shortlisted after a campaign fit check."
+                }), 403
             try:
                 raw_filepath = model_store.raw_front_path(model_id)
             except model_store.ModelStoreError as e:

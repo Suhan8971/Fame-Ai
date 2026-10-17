@@ -36,6 +36,45 @@ const VIEW_HINTS: Record<ScanView, string> = {
   back: "Turn all the way around — back facing the camera. Step back so your entire body, head to feet, is visible.",
 };
 
+const SPOKEN_VIEW_HINTS: Record<ScanView, string> = {
+  front: "Front view. Face the camera directly, stand on your marked spot, and keep your whole body in frame.",
+  left: "Left view. Turn 90 degrees so your left side faces the camera. Stay on the same spot.",
+  right: "Right view. Turn 90 degrees so your right side faces the camera. Stay on the same spot.",
+  back: "Back view. Turn all the way around so your back faces the camera. Stay on the same spot.",
+};
+
+const spokenCorrection = (message: string) => {
+  const text = message.trim();
+  if (/head.{0,30}cut off|top of your head.{0,30}cut off/i.test(text)) {
+    return "Your head is cut off. Please move slightly farther back.";
+  }
+  if (/feet.{0,30}cut off/i.test(text)) {
+    return "Your feet are cut off. Please move farther back.";
+  }
+  if (/too far from the camera|too far away|step closer|move closer/i.test(text)) {
+    return "Please move closer to the camera.";
+  }
+  if (/too close|step back|move farther away/i.test(text)) {
+    return "Please move farther away from the camera.";
+  }
+  if (/move to the cent(?:re|er)|move in toward the centre/i.test(text)) {
+    return "Please move toward the center of the camera frame.";
+  }
+  if (/move to your left|move to your right/i.test(text)) {
+    return `${text.replace(/\.$/, "")}.`;
+  }
+  if (/shoulder|stand up straight|torso.{0,20}lean|straighten/i.test(text)) {
+    return "Please level your shoulders and stand straight.";
+  }
+  if (/relax your arms|arms.{0,20}clear/i.test(text)) {
+    return "Please relax your arms down by your sides.";
+  }
+  if (/no person detected|step into the frame/i.test(text)) {
+    return "No person is visible. Please step into the camera frame.";
+  }
+  return text;
+};
+
 const POLL_INTERVAL_MS = 400;
 // /status failures tolerated before the "cannot connect" card is shown; the
 // original UI kept polling silently, which hid a stopped server entirely.
@@ -88,6 +127,69 @@ export const ImageUpload: React.FC = () => {
 
   const pollFailures = useRef(0);
   const finished = useRef(false);
+  const lastGuidanceView = useRef<ScanView | null>(null);
+  const lastSpokenGuidance = useRef("");
+  const pendingGuidance = useRef("");
+  const guidanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSpokenAt = useRef(0);
+
+  const speak = useCallback((text: string, signature: string) => {
+    if (!("speechSynthesis" in window) || !text) return;
+    if (guidanceTimer.current !== null) {
+      clearTimeout(guidanceTimer.current);
+      guidanceTimer.current = null;
+    }
+    pendingGuidance.current = "";
+    if (signature === lastSpokenGuidance.current && Date.now() - lastSpokenAt.current < 12000) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 0.95;
+    window.speechSynthesis.speak(utterance);
+    lastSpokenGuidance.current = signature;
+    lastSpokenAt.current = Date.now();
+  }, []);
+
+  const announceStatus = useCallback((data: ScannerStatus) => {
+    if (data.view !== lastGuidanceView.current) {
+      lastGuidanceView.current = data.view;
+      speak(SPOKEN_VIEW_HINTS[data.view], `view:${data.view}`);
+      return;
+    }
+
+    const reasons = data.blocking_reasons?.length
+      ? data.blocking_reasons
+      : data.mode === "aligning" && data.message && data.message !== "Hold still..."
+      ? [data.message]
+      : [];
+    if (!reasons.length) {
+      pendingGuidance.current = "";
+      lastSpokenGuidance.current = "";
+      if (guidanceTimer.current !== null) {
+        clearTimeout(guidanceTimer.current);
+        guidanceTimer.current = null;
+      }
+      return;
+    }
+
+    const signature = `${data.view}:${reasons.join("|")}`;
+    if (signature === lastSpokenGuidance.current || signature === pendingGuidance.current) return;
+    pendingGuidance.current = signature;
+    if (guidanceTimer.current !== null) clearTimeout(guidanceTimer.current);
+    guidanceTimer.current = setTimeout(() => {
+      if (Date.now() - lastSpokenAt.current < 1600) {
+        guidanceTimer.current = setTimeout(() => {
+          speak(reasons.map(spokenCorrection).join(" "), signature);
+        }, 1600 - (Date.now() - lastSpokenAt.current));
+        return;
+      }
+      speak(reasons.map(spokenCorrection).join(" "), signature);
+    }, 700);
+  }, [speak]);
+
+  useEffect(() => () => {
+    if (guidanceTimer.current !== null) clearTimeout(guidanceTimer.current);
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+  }, []);
 
   // Pre-fill fields if profile loaded
   useEffect(() => {
@@ -207,7 +309,7 @@ export const ImageUpload: React.FC = () => {
       await api.savePredictionFromScan(user.id, s.summary, heightVal);
       try {
         await scannerApi.saveModelSession();
-        setProfileSave({ ok: true, text: "Saved to your model profile — recruiters can now view these captures." });
+        setProfileSave({ ok: true, text: "Saved to your candidate profile. Recruiter try-on access requires a campaign application and shortlist." });
       } catch (e) {
         setProfileSave({
           ok: false,
@@ -235,6 +337,7 @@ export const ImageUpload: React.FC = () => {
         const recovered = pollFailures.current >= MAX_POLL_FAILURES;
         pollFailures.current = 0;
         setStatus(data);
+        announceStatus(data);
         if (data.mode === "error") {
           // The backend now says WHY (no physical webcam vs. lost the
           // browser's feed vs. never got a first frame) -- show that
@@ -265,9 +368,10 @@ export const ImageUpload: React.FC = () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [phase, finishScan]);
+  }, [phase, finishScan, announceStatus]);
 
   const beginSession = async () => {
+    speak(SPOKEN_VIEW_HINTS.front, "view:front");
     await scannerApi.start(heightVal, deviceModel.trim(), modelIdentity());
     finished.current = false;
     pollFailures.current = 0;

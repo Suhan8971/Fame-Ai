@@ -98,6 +98,15 @@ export const scannerApi = {
   saveModelSession: () =>
     postJson<{ ok: boolean; model_id: string; saved_at: number }>("/api/models/save_session"),
 
+  syncApplication: (data: {
+    candidate_id: string;
+    application_id: string;
+    campaign_id: string;
+    status: "pending" | "shortlisted" | "rejected";
+    fit_check_completed: true;
+    event: "fit_check" | "status_update";
+  }) => postJson<{ ok: boolean }>("/api/models/applications", data),
+
   listModels: () => request<{ models: StoredModel[] }>("/api/models").then((r) => r.models),
 
   getModel: (modelId: string) =>

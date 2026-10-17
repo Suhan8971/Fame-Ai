@@ -5,6 +5,7 @@ import type {
 import { MOCK_CAMPAIGNS, MOCK_GARMENTS, MOCK_APPLICATIONS, MOCK_PREDICTIONS, MOCK_PROFILES, MOCK_NOTIFICATIONS } from "./mockData";
 import { STORAGE_KEYS, readStore, writeStore, getProfileRecord, findUserById } from "./localDb";
 import { nowIso, nowMs } from "./clock";
+import { scannerApi } from "./scannerApi";
 import {
   getMissingProfileItems, isCampaignOpen, isRejectionNoticeDue,
   REJECTION_NOTICE_MESSAGE, REJECTION_NOTICE_TITLE,
@@ -428,6 +429,15 @@ export const api = {
       updated_at: nowIso(),
     };
 
+    await scannerApi.syncApplication({
+      candidate_id: candidateId,
+      application_id: newApp.id,
+      campaign_id: campaignId,
+      status: newApp.status,
+      fit_check_completed: true,
+      event: "fit_check",
+    });
+
     applications = [newApp, ...applications];
     saveStoredData(STORAGE_KEYS.applications, applications);
     return newApp;
@@ -436,6 +446,16 @@ export const api = {
   updateApplicationStatus: async (id: string, status: "pending" | "shortlisted" | "rejected", feedback: string): Promise<Application> => {
     await new Promise((resolve) => setTimeout(resolve, 400));
     syncFromStorage();
+    const current = applications.find((a) => a.id === id);
+    if (!current) throw new Error("Application not found");
+    await scannerApi.syncApplication({
+      candidate_id: current.candidate_id,
+      application_id: current.id,
+      campaign_id: current.campaign_id,
+      status,
+      fit_check_completed: true,
+      event: "status_update",
+    });
     applications = applications.map((a) =>
       a.id === id
         ? {
@@ -531,6 +551,15 @@ export const api = {
     syncFromStorage();
     const app = applications.find((a) => a.id === applicationId);
     if (!app) throw new Error("Application not found");
+
+    await scannerApi.syncApplication({
+      candidate_id: app.candidate_id,
+      application_id: app.id,
+      campaign_id: app.campaign_id,
+      status: "shortlisted",
+      fit_check_completed: true,
+      event: "status_update",
+    });
 
     const selected = getSelectedStore();
     const existing = selected.find((s) => s.candidate_id === app.candidate_id && s.campaign_id === app.campaign_id);

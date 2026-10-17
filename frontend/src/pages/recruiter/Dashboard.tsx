@@ -203,6 +203,7 @@ export const Dashboard: React.FC = () => {
       setActiveApp(apps.find((a) => a.id === activeApp.id) || activeApp);
       setSelectedModels(await api.getSelectedModels());
       setAnalytics(await api.getRecruiterAnalytics(selectedCampaignId || undefined));
+      await loadScanModels();
     } catch (err) {
       setPickMessage({ ok: false, text: err instanceof Error ? err.message : "Could not save this model." });
     } finally {

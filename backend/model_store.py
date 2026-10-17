@@ -130,6 +130,9 @@ def list_models():
             continue
         if not rec:
             continue
+        from application_store import is_shortlisted
+        if not is_shortlisted(rec["model_id"]):
+            continue
         release = (rec.get("summary") or {}).get("release") or {}
         out.append({
             "model_id": rec["model_id"],
