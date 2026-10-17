@@ -113,10 +113,9 @@ export const ImageUpload: React.FC = () => {
   const [profileSave, setProfileSave] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Browser-side camera (CAMERA_MODE=browser, i.e. the backend has no
-  // physical camera of its own -- see backend/app.py). The visible preview
-  // stays exactly what it always was: the backend's own annotated
-  // /video_feed MJPEG stream (skeleton, guidance HUD, countdown baked in
-  // server-side). This <video> is only a hidden frame SOURCE for capture.
+  // physical camera of its own -- see backend/app.py). This local stream is
+  // displayed directly for a responsive preview and remains the unchanged
+  // source for frames uploaded to the measurement pipeline.
   const [browserCameras, setBrowserCameras] = useState<CameraDevice[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -816,18 +815,16 @@ export const ImageUpload: React.FC = () => {
                   guidance (landmarks, measurement lines, READY / blocking HUD,
                   countdown) across the whole frame, so cropping would hide it. */}
               <div className="relative w-full rounded-3xl bg-slate-950 border border-white/5 overflow-hidden flex items-center justify-center shadow-inner min-h-[260px]">
-                {/* Hidden frame SOURCE only (CAMERA_MODE=browser) -- never
-                    shown directly. The visible preview stays the backend's
-                    own annotated /video_feed <img> below, which already has
-                    the skeleton/HUD/countdown baked in server-side; this
-                    <video> just feeds captureFrame() -> POST /push_frame. */}
+                {/* In browser-camera mode show the local stream for immediate
+                    feedback. captureFrame() still uploads this same stream to
+                    the backend; local-camera mode uses the annotated feed. */}
                 <video
                   ref={videoRef}
                   autoPlay
                   muted
                   playsInline
-                  className="hidden"
-                  aria-hidden="true"
+                  className={status?.camera_mode === "browser" ? "relative z-[1] block w-full h-auto scale-x-[-1]" : "hidden"}
+                  aria-hidden={status?.camera_mode !== "browser"}
                 />
                 {cameraError ? (
                   <div className="p-8 text-center max-w-sm space-y-3">
@@ -849,7 +846,7 @@ export const ImageUpload: React.FC = () => {
                     <div className="absolute inset-0 flex items-center justify-center">
                       <div className="w-10 h-10 border-4 border-slate-900 border-t-brand-purple rounded-full animate-spin" />
                     </div>
-                    {videoSrc && (
+                    {videoSrc && status?.camera_mode !== "browser" && (
                       <img
                         src={videoSrc}
                         alt="AI Body Scanner Stream"
