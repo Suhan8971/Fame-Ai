@@ -237,6 +237,7 @@ state = {
     "last_rejection": None,  # why the most recent capture attempt was refused
     "rejected_at": None,     # when, so the reason can be held on screen
     "blocking_reasons": [],  # live: everything currently preventing a capture
+    "pose_landmarks": None,  # normalized live pose points for the browser overlay
     "model": None,           # Fashion-Show model being scanned: {"id", "name", "email"}
 }
 
@@ -724,6 +725,13 @@ def camera_loop():
 
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 results = pose.process(rgb)
+                pose_points = None
+                if results.pose_landmarks:
+                    pose_points = [[float(landmark.x), float(landmark.y),
+                                    float(landmark.visibility)]
+                                   for landmark in results.pose_landmarks.landmark]
+                with state_lock:
+                    state["pose_landmarks"] = pose_points
 
                 if results.pose_landmarks:
                     mp_drawing.draw_landmarks(display, results.pose_landmarks,
@@ -1181,6 +1189,7 @@ def start():
         state["summary"] = None
         state["last_rejection"] = None
         state["blocking_reasons"] = []
+        state["pose_landmarks"] = None
         # A fresh engine per session: it holds the anatomical level positions
         # found in the front view, which the side views sample depth at.
         # Reusing one across sessions would measure this person's chest at
@@ -1206,6 +1215,7 @@ def status():
             "view_order": VIEW_ORDER,
             "views_data": state["views_data"],
             "summary": state["summary"],
+            "pose_landmarks": state["pose_landmarks"],
         }
     # Not gated by state_lock: vton_engine's own attributes are set once at
     # startup (model load) and read-only after that, so no lock is needed.
