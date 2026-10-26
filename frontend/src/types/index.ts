@@ -226,7 +226,6 @@ export interface ScannerStatus {
   view_order: ScanView[];
   views_data: Partial<Record<ScanView, ScanViewEntry>>;
   summary: ScanSummary | null;
-  pose_landmarks: [number, number, number][] | null;
   blocking_reasons: string[];
   last_rejection: { view: ScanView; reason: string; at: number } | null;
   model: { id: string; name: string; email: string } | null;

@@ -28,12 +28,6 @@ const FRAME_PUSH_INTERVAL_MS = 130;
 // state: the annotated camera stream, the current message, what is blocking a
 // capture, and the fused result once all four views are in.
 const VIEW_ORDER: ScanView[] = ["front", "left", "right", "back"];
-const POSE_CONNECTIONS: [number, number][] = [
-  [11, 12], [11, 13], [13, 15], [12, 14], [14, 16],
-  [11, 23], [12, 24], [23, 24], [23, 25], [25, 27],
-  [27, 29], [29, 31], [27, 31], [24, 26], [26, 28],
-  [28, 30], [30, 32], [28, 32],
-];
 
 const VIEW_HINTS: Record<ScanView, string> = {
   front: "Face the camera directly. Step back so your entire body — head to feet — is visible (~2m/6.5ft), arms relaxed at your sides.",
@@ -119,9 +113,10 @@ export const ImageUpload: React.FC = () => {
   const [profileSave, setProfileSave] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Browser-side camera (CAMERA_MODE=browser, i.e. the backend has no
-  // physical camera of its own -- see backend/app.py). This local stream is
-  // displayed directly for a responsive preview; normalized backend landmarks
-  // are drawn over it without waiting for the annotated MJPEG stream.
+  // physical camera of its own -- see backend/app.py). The visible preview
+  // stays exactly what it always was: the backend's own annotated
+  // /video_feed MJPEG stream (skeleton, guidance HUD, countdown baked in
+  // server-side). This <video> is only a hidden frame SOURCE for capture.
   const [browserCameras, setBrowserCameras] = useState<CameraDevice[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -821,47 +816,19 @@ export const ImageUpload: React.FC = () => {
                   guidance (landmarks, measurement lines, READY / blocking HUD,
                   countdown) across the whole frame, so cropping would hide it. */}
               <div className="relative w-full rounded-3xl bg-slate-950 border border-white/5 overflow-hidden flex items-center justify-center shadow-inner min-h-[260px]">
-                {/* In browser-camera mode show the local stream for immediate
-                    feedback. captureFrame() still uploads this same stream to
-                    the backend; local-camera mode uses the annotated feed. */}
+                {/* Hidden frame SOURCE only (CAMERA_MODE=browser) -- never
+                    shown directly. The visible preview stays the backend's
+                    own annotated /video_feed <img> below, which already has
+                    the skeleton/HUD/countdown baked in server-side; this
+                    <video> just feeds captureFrame() -> POST /push_frame. */}
                 <video
                   ref={videoRef}
                   autoPlay
                   muted
                   playsInline
-                  className={status?.camera_mode === "browser" ? "relative z-[1] block w-full h-auto scale-x-[-1]" : "hidden"}
-                  aria-hidden={status?.camera_mode !== "browser"}
+                  className="hidden"
+                  aria-hidden="true"
                 />
-                {status?.camera_mode === "browser" && status.pose_landmarks && (
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 1 1"
-                    preserveAspectRatio="none"
-                    className="absolute inset-0 z-[2] h-full w-full pointer-events-none"
-                  >
-                    {POSE_CONNECTIONS.map(([start, end]) => {
-                      const first = status.pose_landmarks?.[start];
-                      const second = status.pose_landmarks?.[end];
-                      if (!first || !second || first[2] < 0.35 || second[2] < 0.35) return null;
-                      return (
-                        <line
-                          key={`${start}-${end}`}
-                          x1={1 - first[0]}
-                          y1={first[1]}
-                          x2={1 - second[0]}
-                          y2={second[1]}
-                          stroke="#39f2a5"
-                          strokeWidth="0.006"
-                          strokeLinecap="round"
-                          vectorEffect="non-scaling-stroke"
-                        />
-                      );
-                    })}
-                    {status.pose_landmarks.map(([x, y, visibility], index) => visibility >= 0.35 ? (
-                      <circle key={index} cx={1 - x} cy={y} r="0.007" fill="#ffffff" stroke="#13b981" strokeWidth="0.003" />
-                    ) : null)}
-                  </svg>
-                )}
                 {cameraError ? (
                   <div className="p-8 text-center max-w-sm space-y-3">
                     <AlertCircle className="w-10 h-10 text-red-500 mx-auto mb-1" />
@@ -882,7 +849,7 @@ export const ImageUpload: React.FC = () => {
                     <div className="absolute inset-0 flex items-center justify-center">
                       <div className="w-10 h-10 border-4 border-slate-900 border-t-brand-purple rounded-full animate-spin" />
                     </div>
-                    {videoSrc && status?.camera_mode !== "browser" && (
+                    {videoSrc && (
                       <img
                         src={videoSrc}
                         alt="AI Body Scanner Stream"
